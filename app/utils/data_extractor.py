@@ -321,11 +321,13 @@ class DataExtractor:
             )
         )
 
+        # Use the flexible date extraction method for invoice_date
         invoice_date = None
         if 'invoice_date' in entities:
             date_str = entities.get('invoice_date', '')
             logger.info(f"Attempting to parse invoice date: {date_str}")
             try:
+                # Direct handling for common formats
                 if re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', date_str):
                     try:
                         day, month, year = date_str.split('/')
@@ -334,6 +336,7 @@ class DataExtractor:
                     except (ValueError, IndexError) as e:
                         logger.warning(f"Failed direct parsing: {str(e)}")
                 
+                # Try with hyphen format
                 elif re.match(r'^\d{1,2}-\d{1,2}-\d{4}$', date_str):
                     try:
                         day, month, year = date_str.split('-')
@@ -342,7 +345,9 @@ class DataExtractor:
                     except (ValueError, IndexError) as e:
                         logger.warning(f"Failed direct hyphen parsing: {str(e)}")
                 
+                # If direct parsing failed, use the flexible method
                 if not invoice_date:
+                    # Create an entity format that matches what _extract_date_from_entities expects
                     invoice_date_entity = [f"invoice_date:{date_str}"]
                     logger.info(f"Created entity: {invoice_date_entity}")
                     invoice_date = await self._extract_date(date_str, entities=invoice_date_entity)
@@ -353,26 +358,58 @@ class DataExtractor:
             except Exception as e:
                 logger.warning(f"Error parsing invoice date: {date_str}, error: {str(e)}")
 
+        # Use net_amount for grand_total (pre-tax amount)
         grand_total = None
-        if 'total_amount' in entities:
+        if 'net_amount' in entities:
             try:
-                grand_total = self._parse_decimal(entities.get('total_amount', ''))
-            except:
-                pass
+                grand_total = self._parse_decimal(entities.get('net_amount', ''))
+                logger.info(f"Extracted grand_total from net_amount: {grand_total}")
+            except Exception as e:
+                logger.warning(f"Error parsing net_amount: {str(e)}")
                 
+        # Use total_tax_amount for taxes
         taxes = None
         if 'total_tax_amount' in entities:
             try:
                 taxes = self._parse_decimal(entities.get('total_tax_amount', ''))
-            except:
-                pass
+                logger.info(f"Extracted taxes: {taxes}")
+            except Exception as e:
+                logger.warning(f"Error parsing total_tax_amount: {str(e)}")
                 
+        # Use total_amount for final_total (post-tax amount)
         final_total = None
         if 'total_amount' in entities:
             try:
                 final_total = self._parse_decimal(entities.get('total_amount', ''))
-            except:
-                pass
+                logger.info(f"Extracted final_total from total_amount: {final_total}")
+            except Exception as e:
+                logger.warning(f"Error parsing total_amount: {str(e)}")
+
+        # Verify the totals match the formula: grand_total + taxes = final_total
+        if grand_total is not None and taxes is not None and final_total is not None:
+            calculated_total = grand_total + taxes
+            if abs(calculated_total - final_total) > Decimal('0.01'):
+                logger.warning(f"Total mismatch for {filename}: {grand_total} + {taxes} = {calculated_total}, but final_total is {final_total}")
+        
+        # If we're missing grand_total but have final_total and taxes, calculate it
+        if grand_total is None and final_total is not None and taxes is not None:
+            grand_total = final_total - taxes
+            logger.info(f"Calculated grand_total: {grand_total}")
+        
+        # If we're missing final_total but have grand_total and taxes, calculate it
+        if final_total is None and grand_total is not None and taxes is not None:
+            final_total = grand_total + taxes
+            logger.info(f"Calculated final_total: {final_total}")
+            
+        # If we only have total_amount but no net_amount, and we have taxes,
+        # calculate grand_total from total_amount - taxes
+        if grand_total is None and 'total_amount' in entities and taxes is not None:
+            try:
+                total_amount = self._parse_decimal(entities.get('total_amount', ''))
+                grand_total = total_amount - taxes
+                logger.info(f"Calculated grand_total from total_amount - taxes: {grand_total}")
+            except Exception as e:
+                logger.warning(f"Error calculating grand_total from total_amount - taxes: {str(e)}")
 
         items = []
         tables = docai_result.get('tables', [])
@@ -401,7 +438,7 @@ class DataExtractor:
             final_total=final_total,
             items=items,
             pages=1  
-        )   
+        )
     
     async def _extract_from_gcv(self, ocr_result: Dict, filename: str) -> Invoice:
         text = ocr_result.get('text', '')
