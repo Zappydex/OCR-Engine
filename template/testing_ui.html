@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud OCR Engine</title>
+    <style>
+        /* CSS styles remain unchanged */
+        :root {
+            --primary-color: #4361ee;
+            --primary-hover: #3a56d4;
+            --secondary-color: #f5f7ff;
+            --text-color: #333;
+            --light-gray: #e9ecef;
+            --border-radius: 12px;
+            --shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            --transition: all 0.3s ease;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: var(--text-color);
+            background-color: #f8f9fa;
+            max-width: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: linear-gradient(135deg, var(--primary-color), #3a0ca3);
+            color: white;
+            padding: 2rem;
+            text-align: center;
+            border-radius: 0 0 var(--border-radius) var(--border-radius);
+            box-shadow: var(--shadow);
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        main {
+            margin-top: 2rem;
+        }
+
+        .card {
+            background-color: white;
+            border-radius: var(--border-radius);
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: var(--shadow);
+            transition: var(--transition);
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        .card h2 {
+            color: var(--primary-color);
+            margin-bottom: 1.5rem;
+            font-size: 1.5rem;
+            border-bottom: 2px solid var(--light-gray);
+            padding-bottom: 0.75rem;
+        }
+
+        .upload-area {
+            border: 2px dashed var(--light-gray);
+            border-radius: var(--border-radius);
+            padding: 2rem;
+            text-align: center;
+            margin-bottom: 1.5rem;
+            background-color: var(--secondary-color);
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .upload-area:hover {
+            border-color: var(--primary-color);
+            background-color: #eef2ff;
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            color: var(--primary-color);
+            margin-bottom: 1rem;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .upload-text {
+            color: #6c757d;
+            margin-bottom: 0.5rem;
+        }
+
+        .file-types {
+            font-size: 0.8rem;
+            color: #adb5bd;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn:hover {
+            background-color: var(--primary-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn:active {
+            transform: translateY(1px);
+        }
+
+        .btn:disabled {
+            background-color: #ced4da;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .btn-secondary {
+            background-color: white;
+            color: var(--primary-color);
+            border: 2px solid var(--primary-color);
+            margin-left: 10px;
+        }
+
+        .btn-secondary:hover {
+            background-color: var(--secondary-color);
+        }
+
+        .progress-container {
+            width: 100%;
+            height: 12px;
+            background-color: var(--light-gray);
+            border-radius: 50px;
+            overflow: hidden;
+            margin-bottom: 1rem;
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .progress-bar {
+            width: 0;
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary-color), #4895ef);
+            border-radius: 50px;
+            transition: width 0.3s ease-in-out;
+            position: relative;
+        }
+
+        .progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(
+                90deg,
+                rgba(255, 255, 255, 0.2) 25%,
+                transparent 25%,
+                transparent 50%,
+                rgba(255, 255, 255, 0.2) 50%,
+                rgba(255, 255, 255, 0.2) 75%,
+                transparent 75%
+            );
+            background-size: 20px 20px;
+            animation: progress-animation 1s linear infinite;
+            border-radius: 50px;
+        }
+
+        @keyframes progress-animation {
+            from {
+                background-position: 0 0;
+            }
+            to {
+                background-position: 20px 0;
+            }
+        }
+
+        .progress-text {
+            color: var(--primary-color);
+            text-align: center;
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .result-card {
+            background-color: #f8f9fa;
+            border-radius: var(--border-radius);
+            padding: 1.5rem;
+            margin-top: 1.5rem;
+            border-left: 4px solid var(--primary-color);
+        }
+
+        .api-key-status {
+            background-color: #fff3cd;
+            color: #856404;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            border-radius: var(--border-radius);
+            border-left: 4px solid #ffc107;
+            display: none;
+        }
+
+        .error-display {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            border-radius: var(--border-radius);
+            border-left: 4px solid #f5c6cb;
+            display: none;
+        }
+
+        .file-list {
+            margin-top: 1rem;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem;
+            background-color: var(--secondary-color);
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+        }
+
+        .file-name {
+            font-size: 0.9rem;
+            color: var(--text-color);
+            flex-grow: 1;
+            padding-left: 10px;
+        }
+
+        .remove-file {
+            background: none;
+            border: none;
+            color: #dc3545;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: var(--transition);
+        }
+
+        .remove-file:hover {
+            color: #b02a37;
+        }
+
+        .button-container {
+            text-align: center;
+            margin-top: 1rem;
+        }
+
+        .doc-button-container {
+            text-align: center;
+            margin-top: 2rem;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            header {
+                padding: 1.5rem 1rem;
+            }
+            
+            header h1 {
+                font-size: 2rem;
+            }
+            
+            .card {
+                padding: 1.5rem;
+            }
+            
+            .upload-area {
+                padding: 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Cloud OCR Engine</h1>
+            <p>Extract invoice details and export to csv and excel with powerful OCR tech</p>
+        </header>
+        
+        <main>
+            <div id="api-key-status" class="api-key-status">
+                <strong>Warning:</strong> API key not detected. Some features may be limited.
+            </div>
+            
+            <div class="card">
+                <h2>Upload Files</h2>
+                <form id="upload-form">
+                    <div id="upload-area" class="upload-area" onclick="document.getElementById('file-input').click();">
+                        <div class="upload-icon">📄</div>
+                        <p class="upload-text">Drag & Drop files here or click to browse</p>
+                        <p class="file-types">Supported formats: PDF, JPG, JPEG, PNG</p>
+                        <input type="file" id="file-input" class="file-input" multiple accept=".pdf,.jpg,.jpeg,.png">
+                    </div>
+                    
+                    <div id="file-list" class="file-list"></div>
+                    
+                    <div class="button-container">
+                        <button type="submit" id="upload-button" class="btn" disabled>Process</button>
+                        <button type="button" id="cancel-button" class="btn btn-secondary" disabled>Cancel</button>
+                    </div>
+                </form>
+            </div>
+            
+            <div class="card">
+                <h2>Progress</h2>
+                <div id="progress-container" class="progress-container">
+                    <div id="progress-bar" class="progress-bar"></div>
+                </div>
+                <p id="progress-text" class="progress-text">0%</p>
+            </div>
+            
+            <div id="error-display" class="error-display"></div>
+            
+            <div class="card">
+                <h2>Results</h2>
+                <div id="result-content"></div>
+            </div>
+            
+            <div class="doc-button-container">
+                <button type="button" id="api-docs-button" class="btn btn-secondary" onclick="window.location.href='/docs';">API Documentation</button>
+            </div>
+        </main>
+    </div>
+    
+    <!-- Inject API key from server -->
+    <script>
+        const API_KEY = "{{ api_key }}";
+    </script>
+    
+    <!-- Add minimal UI interaction script -->
+    <script>
+        // Handle file input display
+        document.getElementById('file-input').addEventListener('change', function() {
+            const fileList = document.getElementById('file-list');
+            const uploadButton = document.getElementById('upload-button');
+            
+            fileList.innerHTML = '';
+            uploadButton.disabled = this.files.length === 0;
+            
+            for (let i = 0; i < this.files.length; i++) {
+                const file = this.files[i];
+                const fileItem = document.createElement('div');
+                fileItem.classList.add('file-item');
+                
+                const fileName = document.createElement('div');
+                fileName.classList.add('file-name');
+                fileName.textContent = file.name;
+                
+                fileItem.appendChild(fileName);
+                fileList.appendChild(fileItem);
+            }
+        });
+        
+        // Handle drag and drop
+        const uploadArea = document.getElementById('upload-area');
+        
+        uploadArea.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            this.style.borderColor = 'var(--primary-color)';
+            this.style.backgroundColor = '#eef2ff';
+        });
+        
+        uploadArea.addEventListener('dragleave', function() {
+            this.style.borderColor = 'var(--light-gray)';
+            this.style.backgroundColor = 'var(--secondary-color)';
+        });
+        
+        uploadArea.addEventListener('drop', function(e) {
+            e.preventDefault();
+            this.style.borderColor = 'var(--light-gray)';
+            this.style.backgroundColor = 'var(--secondary-color)';
+            
+            if (e.dataTransfer.files.length) {
+                const fileInput = document.getElementById('file-input');
+                fileInput.files = e.dataTransfer.files;
+                
+                // Trigger change event manually
+                const event = new Event('change');
+                fileInput.dispatchEvent(event);
+            }
+        });
+  
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+   <script>eruda.init();</script>
+    
+    <!-- Link to your script.js for the backend functionality -->
+    <script src="/static/script.js"></script>
+</body>
+</html>

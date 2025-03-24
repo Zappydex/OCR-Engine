@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: invoice-processor
+    env: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: X_API_KEY
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        sync: false
+      - key: CELERY_BROKER_URL
+        sync: false
+      - key: CELERY_RESULT_BACKEND
+        sync: false
+
