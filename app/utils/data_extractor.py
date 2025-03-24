@@ -1,4 +1,4 @@
-##Verified...##
+##Verified...Now...##
 
 import re
 from typing import Dict, List, Tuple, Optional
@@ -197,6 +197,31 @@ class DataExtractor:
         for entity in entities:
             if entity.startswith('invoice_date:') or entity.startswith('date:'):
                 date_str = entity.split(':', 1)[1].strip()
+                
+                # Direct handling for DD/MM/YYYY format
+                if re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', date_str):
+                    try:
+                        day, month, year = date_str.split('/')
+                        return date(int(year), int(month), int(day))
+                    except (ValueError, IndexError):
+                        pass
+                
+                # Direct handling for DD-MM-YYYY format
+                if re.match(r'^\d{1,2}-\d{1,2}-\d{4}$', date_str):
+                    try:
+                        day, month, year = date_str.split('-')
+                        return date(int(year), int(month), int(day))
+                    except (ValueError, IndexError):
+                        pass
+                
+                # Direct handling for YYYY-MM-DD format
+                if re.match(r'^\d{4}-\d{1,2}-\d{1,2}$', date_str):
+                    try:
+                        year, month, day = date_str.split('-')
+                        return date(int(year), int(month), int(day))
+                    except (ValueError, IndexError):
+                        pass
+                
                 for date_order in ['DMY', 'MDY', 'YMD']:
                     try:
                         parsed_date = await asyncio.to_thread(
@@ -231,7 +256,7 @@ class DataExtractor:
                                 return date(year, int(day), int(month))
                             except ValueError:
                                 pass
-        return None 
+        return None    
     
     async def _extract_single_result(self, ocr_result: Dict) -> Invoice:
         try:
@@ -262,12 +287,18 @@ class DataExtractor:
         filename = ocr_result.get('filename', '')
         
         if docai_result and 'entities' in docai_result:
-           
+            logger.info(f"Using DocAI extraction for {filename}")
             invoice = await self._extract_from_docai(docai_result, filename)
             
             if self._is_invoice_valid(invoice):
+                logger.info(f"DocAI extraction successful for {filename}, invoice date: {invoice.invoice_date}")
                 return invoice
+            else:
+                logger.warning(f"DocAI extraction produced invalid invoice for {filename}")
+        else:
+            logger.info(f"No DocAI result available for {filename}, using GCV extraction")
         
+        logger.info(f"Falling back to GCV extraction for {filename}")
         return await self._extract_from_gcv(ocr_result, filename)
     
     def _is_invoice_valid(self, invoice: Invoice) -> bool:
@@ -293,9 +324,30 @@ class DataExtractor:
         invoice_date = None
         if 'invoice_date' in entities:
             date_str = entities.get('invoice_date', '')
+            logger.info(f"Attempting to parse invoice date: {date_str}")
             try:
-                invoice_date_entity = [f"invoice_date:{date_str}"]
-                invoice_date = await self._extract_date(date_str, entities=invoice_date_entity)
+                if re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', date_str):
+                    try:
+                        day, month, year = date_str.split('/')
+                        invoice_date = date(int(year), int(month), int(day))
+                        logger.info(f"Parsed date directly: {invoice_date}")
+                    except (ValueError, IndexError) as e:
+                        logger.warning(f"Failed direct parsing: {str(e)}")
+                
+                elif re.match(r'^\d{1,2}-\d{1,2}-\d{4}$', date_str):
+                    try:
+                        day, month, year = date_str.split('-')
+                        invoice_date = date(int(year), int(month), int(day))
+                        logger.info(f"Parsed hyphen date directly: {invoice_date}")
+                    except (ValueError, IndexError) as e:
+                        logger.warning(f"Failed direct hyphen parsing: {str(e)}")
+                
+                if not invoice_date:
+                    invoice_date_entity = [f"invoice_date:{date_str}"]
+                    logger.info(f"Created entity: {invoice_date_entity}")
+                    invoice_date = await self._extract_date(date_str, entities=invoice_date_entity)
+                    logger.info(f"Result of flexible date extraction: {invoice_date}")
+                
                 if not invoice_date:
                     logger.warning(f"Could not parse invoice date: {date_str}")
             except Exception as e:
@@ -349,7 +401,7 @@ class DataExtractor:
             final_total=final_total,
             items=items,
             pages=1  
-        )
+        )   
     
     async def _extract_from_gcv(self, ocr_result: Dict, filename: str) -> Invoice:
         text = ocr_result.get('text', '')
