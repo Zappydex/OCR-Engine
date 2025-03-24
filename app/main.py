@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import asyncio
 import tempfile
+import aioredis
 import os
 import uuid
 import shutil
@@ -405,13 +406,25 @@ async def root(request: Request):
         "api_key": settings.X_API_KEY  
     })
 
+
 @app.on_event("startup")
 async def startup_event():
     try:
+        logger.info("=== NEW DEPLOYMENT STARTED ===")
         logger.info("Application is starting up")
         try:
             await initialize_ocr_engine()
             await initialize_data_extractor()
+            
+            # Global Redis cache clearing
+            try:
+                redis = await aioredis.from_url(settings.REDIS_URL)
+                await redis.flushall()
+                logger.info("Global Redis cache cleared on startup")
+                await redis.close()
+            except Exception as e:
+                logger.error(f"Failed to clear Redis cache: {str(e)}")
+                
             logger.info("OCR engine and data extractor initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize components: {str(e)}")
