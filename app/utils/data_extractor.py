@@ -1,3 +1,5 @@
+##Verified...##
+
 import re
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime, date
@@ -255,12 +257,13 @@ class DataExtractor:
         except Exception as e:
             logger.error(f"Error extracting data for {ocr_result.get('filename', '')}: {str(e)}")
             return Invoice(filename=ocr_result.get("filename", ""))    
-
+    
     async def extract_invoice_data(self, ocr_result: Dict, docai_result: Optional[Dict] = None) -> Invoice:
         filename = ocr_result.get('filename', '')
         
         if docai_result and 'entities' in docai_result:
-            invoice = self._extract_from_docai(docai_result, filename)
+           
+            invoice = await self._extract_from_docai(docai_result, filename)
             
             if self._is_invoice_valid(invoice):
                 return invoice
@@ -272,8 +275,8 @@ class DataExtractor:
                 invoice.vendor.name or 
                 invoice.invoice_date or 
                 invoice.grand_total is not None)
-
-    def _extract_from_docai(self, docai_result: Dict, filename: str) -> Invoice:
+    
+    async def _extract_from_docai(self, docai_result: Dict, filename: str) -> Invoice:
         entities = docai_result.get('entities', {})
         
         vendor = Vendor(
@@ -289,10 +292,14 @@ class DataExtractor:
 
         invoice_date = None
         if 'invoice_date' in entities:
+            date_str = entities.get('invoice_date', '')
             try:
-                invoice_date = datetime.strptime(entities.get('invoice_date', ''), '%Y-%m-%d').date()
-            except ValueError:
-                logger.warning(f"Could not parse invoice date: {entities.get('invoice_date', '')}")
+                invoice_date_entity = [f"invoice_date:{date_str}"]
+                invoice_date = await self._extract_date(date_str, entities=invoice_date_entity)
+                if not invoice_date:
+                    logger.warning(f"Could not parse invoice date: {date_str}")
+            except Exception as e:
+                logger.warning(f"Error parsing invoice date: {date_str}, error: {str(e)}")
 
         grand_total = None
         if 'total_amount' in entities:
