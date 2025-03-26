@@ -17,6 +17,7 @@ class InvoiceExporter:
             "Description", "Quantity", "Unit Price", "Total", "Pages"
         ]
         self.executor = ThreadPoolExecutor(max_workers=settings.MAX_WORKERS)
+        self.default_currency = '$'  # Default currency symbol
 
     async def export_invoices(self, invoices: List[Invoice], format: str) -> io.BytesIO:
         try:
@@ -67,20 +68,39 @@ class InvoiceExporter:
             # Use "Purchase X" as the description
             description = f"Purchase {index}"
             
+            # Format monetary values with currency symbol
+            grand_total = invoice.grand_total
+            if grand_total is not None:
+                grand_total = f"{self.default_currency}{grand_total:.2f}"
+                
+            taxes = invoice.taxes
+            if taxes is not None:
+                taxes = f"{self.default_currency}{taxes:.2f}"
+                
+            final_total = invoice.final_total
+            if final_total is not None:
+                final_total = f"{self.default_currency}{final_total:.2f}"
+                
+            if avg_unit_price != 0:
+                avg_unit_price = f"{avg_unit_price:.2f}"
+            
+            if total_amount != 0:
+                total_amount = f"{self.default_currency}{total_amount:.2f}"
+            
             row = {
                 "Filename": invoice.filename,
                 "Invoice Number": invoice.invoice_number,
                 "Vendor Name": invoice.vendor.name,
                 "Address": address,
                 "Invoice Date": invoice.invoice_date,
-                "Grand Total": invoice.grand_total,
-                "Taxes": invoice.taxes,
-                "Final Total": invoice.final_total,
+                "Grand Total": grand_total,
+                "Taxes": taxes,
+                "Final Total": final_total,
                 "Description": description,
                 "Quantity": total_quantity,
                 "Unit Price": avg_unit_price,
                 "Total": total_amount,
-                "Pages": invoice.pages
+                "Pages": index  
             }
             data.append(row)
 
@@ -93,7 +113,7 @@ class InvoiceExporter:
 
     def _export_to_csv_sync(self, df: pd.DataFrame) -> io.BytesIO:
         output = io.BytesIO()
-        df.to_csv(output, index=False, float_format='%.2f')
+        df.to_csv(output, index=False)
         output.seek(0)
         return output
 
