@@ -7,6 +7,8 @@ from app.config import settings
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from openpyxl.styles import Border, Side, Alignment, Font
+import csv
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,28 @@ class InvoiceExporter:
     async def _create_dataframe(self, invoices: List[Invoice]) -> pd.DataFrame:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(self.executor, self._create_dataframe_sync, invoices)
+
+    def _format_decimal(self, value):
+        """Format decimal values intelligently based on their precision"""
+        if value is None or value == 0:
+            return None
+            
+        # Convert to string to check decimal places
+        str_value = str(value)
+        if '.' in str_value:
+            integer_part, decimal_part = str_value.split('.')
+            
+            # If more than 4 decimal places, truncate to 4
+            if len(decimal_part) > 4:
+                return f"{float(value):.4f}"
+            # If 1-2 decimal places, keep 2 decimal places
+            elif len(decimal_part) <= 2:
+                return f"{float(value):.2f}"
+            # If 3-4 decimal places, keep as is
+            else:
+                return str_value
+        else:
+            return str_value
 
     def _create_dataframe_sync(self, invoices: List[Invoice]) -> pd.DataFrame:
         data = []
@@ -69,27 +93,28 @@ class InvoiceExporter:
             # Use "Purchase X" as the description
             description = f"Purchase {index}"
             
-            # Format monetary values with currency symbol and 4 decimal places
+            # Format monetary values with currency symbol
             grand_total = invoice.grand_total
             if grand_total is not None:
-                grand_total = f"{self.default_currency}{grand_total:.4f}"
+                grand_total = f"{self.default_currency}{self._format_decimal(grand_total)}"
                 
             taxes = invoice.taxes
             if taxes is not None:
-                taxes = f"{self.default_currency}{taxes:.4f}"
+                taxes = f"{self.default_currency}{self._format_decimal(taxes)}"
                 
             final_total = invoice.final_total
             if final_total is not None:
-                final_total = f"{self.default_currency}{final_total:.4f}"
+                final_total = f"{self.default_currency}{self._format_decimal(final_total)}"
                 
-            # Format unit price with 4 decimal places (no currency symbol)
+            # Format unit price with currency symbol
+            unit_price_formatted = None
             if avg_unit_price != 0:
-                avg_unit_price = f"{avg_unit_price:.4f}"
+                unit_price_formatted = f"{self.default_currency}{self._format_decimal(avg_unit_price)}"
             
-            # Format total with currency symbol and 4 decimal places
-            total_formatted = total_amount
+            # Format total without currency symbol
+            total_formatted = None
             if total_amount != 0:
-                total_formatted = f"{self.default_currency}{total_amount:.4f}"
+                total_formatted = self._format_decimal(total_amount)
             
             row = {
                 "Filename": invoice.filename,
@@ -102,7 +127,7 @@ class InvoiceExporter:
                 "Final Total": final_total,
                 "Description": description,
                 "Quantity": total_quantity,
-                "Unit Price": avg_unit_price,
+                "Unit Price": unit_price_formatted,
                 "Total": total_formatted,
                 "Pages": index  # Use the index as the page number
             }
@@ -117,9 +142,8 @@ class InvoiceExporter:
 
     def _export_to_csv_sync(self, df: pd.DataFrame) -> io.BytesIO:
         output = io.BytesIO()
-        # Use quoting=csv.QUOTE_ALL to ensure all fields are quoted and displayed properly
-        import csv
-        df.to_csv(output, index=False, quoting=csv.QUOTE_ALL)
+        # Use original CSV export settings to maintain format
+        df.to_csv(output, index=False)
         output.seek(0)
         return output
 
@@ -135,35 +159,43 @@ class InvoiceExporter:
             workbook = writer.book
             sheet = workbook['Invoices']
             
-            # Define thick border style
-            thick_border = Border(
-                left=Side(style='thick'),
-                right=Side(style='thick'),
-                top=Side(style='thick'),
-                bottom=Side(style='thick')
+            # Define medium border style for a more professional look
+            medium_border = Border(
+                left=Side(style='medium'),
+                right=Side(style='medium'),
+                top=Side(style='medium'),
+                bottom=Side(style='medium')
             )
             
             # Apply formatting to all cells
             for row in sheet.iter_rows():
                 for cell in row:
-                    cell.border = thick_border
+                    cell.border = medium_border
                     cell.alignment = Alignment(wrap_text=True, vertical='center')
                     
             # Make headers bold
             for cell in sheet[1]:
                 cell.font = Font(bold=True)
             
-            # Auto-adjust column widths
+            # Auto-adjust column widths with extra padding for text-heavy columns
             for column in sheet.columns:
                 max_length = 0
                 column_letter = column[0].column_letter
+                column_name = sheet[f"{column_letter}1"].value
+                
                 for cell in column:
                     try:
                         if len(str(cell.value)) > max_length:
                             max_length = len(str(cell.value))
                     except:
                         pass
-                adjusted_width = (max_length + 2)
+                
+                # Add extra padding for text-heavy columns
+                if column_name in ["Vendor Name", "Address", "Description"]:
+                    adjusted_width = max_length + 5
+                else:
+                    adjusted_width = max_length + 2
+                    
                 sheet.column_dimensions[column_letter].width = adjusted_width
 
         output.seek(0)
