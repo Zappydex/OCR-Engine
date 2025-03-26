@@ -321,13 +321,11 @@ class DataExtractor:
             )
         )
 
-        # Use the flexible date extraction method for invoice_date
         invoice_date = None
         if 'invoice_date' in entities:
             date_str = entities.get('invoice_date', '')
             logger.info(f"Attempting to parse invoice date: {date_str}")
             try:
-                # Direct handling for common formats
                 if re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', date_str):
                     try:
                         day, month, year = date_str.split('/')
@@ -336,7 +334,6 @@ class DataExtractor:
                     except (ValueError, IndexError) as e:
                         logger.warning(f"Failed direct parsing: {str(e)}")
                 
-                # Try with hyphen format
                 elif re.match(r'^\d{1,2}-\d{1,2}-\d{4}$', date_str):
                     try:
                         day, month, year = date_str.split('-')
@@ -345,9 +342,7 @@ class DataExtractor:
                     except (ValueError, IndexError) as e:
                         logger.warning(f"Failed direct hyphen parsing: {str(e)}")
                 
-                # If direct parsing failed, use the flexible method
                 if not invoice_date:
-                    # Create an entity format that matches what _extract_date_from_entities expects
                     invoice_date_entity = [f"invoice_date:{date_str}"]
                     logger.info(f"Created entity: {invoice_date_entity}")
                     invoice_date = await self._extract_date(date_str, entities=invoice_date_entity)
@@ -358,7 +353,6 @@ class DataExtractor:
             except Exception as e:
                 logger.warning(f"Error parsing invoice date: {date_str}, error: {str(e)}")
 
-        # Use net_amount for grand_total (pre-tax amount)
         grand_total = None
         if 'net_amount' in entities:
             try:
@@ -367,7 +361,6 @@ class DataExtractor:
             except Exception as e:
                 logger.warning(f"Error parsing net_amount: {str(e)}")
                 
-        # Use total_tax_amount for taxes
         taxes = None
         if 'total_tax_amount' in entities:
             try:
@@ -376,7 +369,6 @@ class DataExtractor:
             except Exception as e:
                 logger.warning(f"Error parsing total_tax_amount: {str(e)}")
                 
-        # Use total_amount for final_total (post-tax amount)
         final_total = None
         if 'total_amount' in entities:
             try:
@@ -385,24 +377,19 @@ class DataExtractor:
             except Exception as e:
                 logger.warning(f"Error parsing total_amount: {str(e)}")
 
-        # Verify the totals match the formula: grand_total + taxes = final_total
         if grand_total is not None and taxes is not None and final_total is not None:
             calculated_total = grand_total + taxes
             if abs(calculated_total - final_total) > Decimal('0.01'):
                 logger.warning(f"Total mismatch for {filename}: {grand_total} + {taxes} = {calculated_total}, but final_total is {final_total}")
         
-        # If we're missing grand_total but have final_total and taxes, calculate it
         if grand_total is None and final_total is not None and taxes is not None:
             grand_total = final_total - taxes
             logger.info(f"Calculated grand_total: {grand_total}")
         
-        # If we're missing final_total but have grand_total and taxes, calculate it
         if final_total is None and grand_total is not None and taxes is not None:
             final_total = grand_total + taxes
             logger.info(f"Calculated final_total: {final_total}")
             
-        # If we only have total_amount but no net_amount, and we have taxes,
-        # calculate grand_total from total_amount - taxes
         if grand_total is None and 'total_amount' in entities and taxes is not None:
             try:
                 total_amount = self._parse_decimal(entities.get('total_amount', ''))
@@ -412,21 +399,39 @@ class DataExtractor:
                 logger.warning(f"Error calculating grand_total from total_amount - taxes: {str(e)}")
 
         items = []
-        tables = docai_result.get('tables', [])
-        for table in tables:
-            for row in table:
-                try:
-                    if len(row) >= 4:
-                        item = InvoiceItem(
-                            description=row[0],
-                            quantity=int(row[1]) if row[1].strip() else None,
-                            unit_price=self._parse_decimal(row[2]) if row[2].strip() else None,
-                            total=self._parse_decimal(row[3]) if row[3].strip() else None
-                        )
-                        items.append(item)
-                except (ValueError, IndexError, InvalidOperation) as e:
-                    logger.warning(f"Error parsing invoice item: {str(e)}")
-                    continue
+        line_item_entities = []
+        document = docai_result.get('document', None)
+        
+        if document and hasattr(document, 'entities'):
+            for entity in document.entities:
+                if entity.type_ == 'line_item':
+                    line_item_entities.append(entity.mention_text)
+        
+        for line_item in line_item_entities:
+            try:
+                item = self._parse_line_item(line_item)
+                if item:
+                    items.append(item)
+            except Exception as e:
+                logger.warning(f"Error parsing line item '{line_item}': {str(e)}")
+        
+        if not items:
+            tables = docai_result.get('tables', [])
+            for table in tables:
+                header_row = None
+                if len(table) > 0:
+                    header_row = self._identify_header_row(table[0])
+                
+                for row_idx, row in enumerate(table):
+                    if row_idx == 0 and header_row:
+                        continue
+                    
+                    try:
+                        item = self._extract_item_from_table_row(row, header_row)
+                        if item:
+                            items.append(item)
+                    except Exception as e:
+                        logger.warning(f"Error parsing invoice item from table: {str(e)}")
 
         return Invoice(
             filename=filename,
@@ -439,6 +444,197 @@ class DataExtractor:
             items=items,
             pages=1  
         )
+        
+    def _parse_line_item(self, line_item: str) -> Optional[InvoiceItem]:
+        line = line_item.strip()
+        if not line:
+            return None
+            
+        description = None
+        quantity = None
+        unit_price = None
+        total = None
+        
+        # Try to identify if this is a standard format with quantity at start
+        qty_match = re.match(r'^\s*(\d+)\s+(.+)', line)
+        if qty_match:
+            quantity = int(qty_match.group(1))
+            remaining = qty_match.group(2).strip()
+            
+            # Find all decimal numbers in the string
+            amount_matches = list(re.finditer(r'\b(\d+(?:[.,]\d+)?)\b', remaining))
+            
+            if len(amount_matches) >= 2:
+                # Extract the last two numbers as unit price and total
+                total_match = amount_matches[-1]
+                unit_price_match = amount_matches[-2]
+                
+                total = self._parse_decimal(total_match.group(1))
+                unit_price = self._parse_decimal(unit_price_match.group(1))
+                
+                # Extract description (everything between quantity and unit price)
+                description_end = unit_price_match.start()
+                description = remaining[:description_end].strip()
+            else:
+                # If we can't find unit price and total, just use the description and quantity
+                description = remaining
+        else:
+            # Try to identify if this is a format with description first
+            # Find all decimal numbers in the string
+            amount_matches = list(re.finditer(r'\b(\d+(?:[.,]\d+)?)\b', line))
+            
+            if len(amount_matches) >= 3:
+                # Might be: DESCRIPTION QTY UNIT_PRICE TOTAL
+                qty_match = amount_matches[0]
+                unit_price_match = amount_matches[-2]
+                total_match = amount_matches[-1]
+                
+                try:
+                    quantity = int(qty_match.group(1))
+                    unit_price = self._parse_decimal(unit_price_match.group(1))
+                    total = self._parse_decimal(total_match.group(1))
+                    
+                    # Description is everything before the first number
+                    description = line[:qty_match.start()].strip()
+                except (ValueError, InvalidOperation):
+                    pass
+            
+            if description is None and len(amount_matches) >= 1:
+                # Might be just DESCRIPTION TOTAL
+                total_match = amount_matches[-1]
+                try:
+                    total = self._parse_decimal(total_match.group(1))
+                    description = line[:total_match.start()].strip()
+                except (ValueError, InvalidOperation):
+                    pass
+        
+        # If we still don't have a description, use the whole line
+        if description is None:
+            description = line
+            
+        # Validate the item has at least a description
+        if description:
+            return InvoiceItem(
+                description=description,
+                quantity=quantity,
+                unit_price=unit_price,
+                total=total
+            )
+        
+        return None
+        
+    def _identify_header_row(self, row: List[str]) -> Dict[str, int]:
+        header_map = {}
+        for idx, cell in enumerate(row):
+            cell_lower = cell.lower().strip()
+            
+            if any(kw in cell_lower for kw in ['desc', 'item', 'service', 'product']):
+                header_map['description'] = idx
+            elif any(kw in cell_lower for kw in ['qty', 'quantity', 'count', 'units']):
+                header_map['quantity'] = idx
+            elif any(kw in cell_lower for kw in ['price', 'rate', 'unit', 'cost']):
+                header_map['unit_price'] = idx
+            elif any(kw in cell_lower for kw in ['amount', 'total', 'sum']):
+                header_map['total'] = idx
+                
+        return header_map
+        
+    def _extract_item_from_table_row(self, row: List[str], header_map: Optional[Dict[str, int]] = None) -> Optional[InvoiceItem]:
+        if not row:
+            return None
+            
+        description = None
+        quantity = None
+        unit_price = None
+        total = None
+        
+        if header_map:
+            # Extract values based on identified headers
+            if 'description' in header_map and header_map['description'] < len(row):
+                description = row[header_map['description']].strip()
+                
+            if 'quantity' in header_map and header_map['quantity'] < len(row):
+                qty_str = row[header_map['quantity']].strip()
+                try:
+                    if qty_str and qty_str.replace('.', '', 1).isdigit():
+                        quantity = int(float(qty_str))
+                except (ValueError, TypeError):
+                    pass
+                    
+            if 'unit_price' in header_map and header_map['unit_price'] < len(row):
+                price_str = row[header_map['unit_price']].strip()
+                try:
+                    if price_str:
+                        unit_price = self._parse_decimal(price_str)
+                except (ValueError, InvalidOperation):
+                    pass
+                    
+            if 'total' in header_map and header_map['total'] < len(row):
+                total_str = row[header_map['total']].strip()
+                try:
+                    if total_str:
+                        total = self._parse_decimal(total_str)
+                except (ValueError, InvalidOperation):
+                    pass
+        else:
+            # No header map, try to infer based on position and content
+            if len(row) >= 4:
+                description = row[0].strip()
+                
+                try:
+                    qty_str = row[1].strip()
+                    if qty_str and qty_str.replace('.', '', 1).isdigit():
+                        quantity = int(float(qty_str))
+                except (ValueError, TypeError):
+                    pass
+                    
+                try:
+                    if row[2].strip():
+                        unit_price = self._parse_decimal(row[2])
+                except (ValueError, InvalidOperation):
+                    pass
+                    
+                try:
+                    if row[3].strip():
+                        total = self._parse_decimal(row[3])
+                except (ValueError, InvalidOperation):
+                    pass
+            elif len(row) == 3:
+                # Might be DESCRIPTION QTY TOTAL
+                description = row[0].strip()
+                
+                try:
+                    qty_str = row[1].strip()
+                    if qty_str and qty_str.replace('.', '', 1).isdigit():
+                        quantity = int(float(qty_str))
+                except (ValueError, TypeError):
+                    pass
+                    
+                try:
+                    if row[2].strip():
+                        total = self._parse_decimal(row[2])
+                except (ValueError, InvalidOperation):
+                    pass
+            elif len(row) == 2:
+                # Might be DESCRIPTION TOTAL
+                description = row[0].strip()
+                
+                try:
+                    if row[1].strip():
+                        total = self._parse_decimal(row[1])
+                except (ValueError, InvalidOperation):
+                    pass
+        
+        # Validate the item has at least a description
+        if description:
+            return InvoiceItem(
+                description=description,
+                quantity=quantity,
+                unit_price=unit_price,
+                total=total
+            )
+            
+        return None 
     
     async def _extract_from_gcv(self, ocr_result: Dict, filename: str) -> Invoice:
         text = ocr_result.get('text', '')

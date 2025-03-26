@@ -14,7 +14,7 @@ class InvoiceExporter:
         self.columns = [
             "Filename", "Invoice Number", "Vendor Name", "Address", 
             "Invoice Date", "Grand Total", "Taxes", "Final Total", 
-            "Quantity", "Unit Price", "Total", "Pages"
+            "Description", "Quantity", "Unit Price", "Total", "Pages"
         ]
         self.executor = ThreadPoolExecutor(max_workers=settings.MAX_WORKERS)
 
@@ -53,8 +53,13 @@ class InvoiceExporter:
             total_amount = 0
             avg_unit_price = 0
             
+            # Concatenate descriptions with a separator
+            descriptions = []
+            
             if invoice.items:
                 for item in invoice.items:
+                    if item.description:
+                        descriptions.append(item.description)
                     if item.quantity is not None:
                         total_quantity += item.quantity
                     if item.total is not None:
@@ -63,6 +68,9 @@ class InvoiceExporter:
                 # Calculate average unit price if we have quantities
                 if total_quantity > 0:
                     avg_unit_price = total_amount / total_quantity
+            
+            # Join all descriptions with a semicolon
+            combined_description = "; ".join(descriptions)
             
             row = {
                 "Filename": invoice.filename,
@@ -73,6 +81,7 @@ class InvoiceExporter:
                 "Grand Total": invoice.grand_total,
                 "Taxes": invoice.taxes,
                 "Final Total": invoice.final_total,
+                "Description": combined_description,
                 "Quantity": total_quantity,
                 "Unit Price": avg_unit_price,
                 "Total": total_amount,
@@ -110,7 +119,7 @@ class InvoiceExporter:
                 for cell in column:
                     try:
                         if len(str(cell.value)) > max_length:
-                            max_length = len(cell.value)
+                            max_length = len(str(cell.value))
                     except:
                         pass
                 adjusted_width = (max_length + 2)
