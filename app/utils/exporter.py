@@ -6,6 +6,7 @@ from app.models import Invoice
 from app.config import settings
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from openpyxl.styles import Border, Side, Alignment, Font
 
 logger = logging.getLogger(__name__)
 
@@ -68,24 +69,27 @@ class InvoiceExporter:
             # Use "Purchase X" as the description
             description = f"Purchase {index}"
             
-            # Format monetary values with currency symbol
+            # Format monetary values with currency symbol and 4 decimal places
             grand_total = invoice.grand_total
             if grand_total is not None:
-                grand_total = f"{self.default_currency}{grand_total:.2f}"
+                grand_total = f"{self.default_currency}{grand_total:.4f}"
                 
             taxes = invoice.taxes
             if taxes is not None:
-                taxes = f"{self.default_currency}{taxes:.2f}"
+                taxes = f"{self.default_currency}{taxes:.4f}"
                 
             final_total = invoice.final_total
             if final_total is not None:
-                final_total = f"{self.default_currency}{final_total:.2f}"
+                final_total = f"{self.default_currency}{final_total:.4f}"
                 
+            # Format unit price with 4 decimal places (no currency symbol)
             if avg_unit_price != 0:
-                avg_unit_price = f"{avg_unit_price:.2f}"
+                avg_unit_price = f"{avg_unit_price:.4f}"
             
+            # Format total with currency symbol and 4 decimal places
+            total_formatted = total_amount
             if total_amount != 0:
-                total_amount = f"{self.default_currency}{total_amount:.2f}"
+                total_formatted = f"{self.default_currency}{total_amount:.4f}"
             
             row = {
                 "Filename": invoice.filename,
@@ -99,8 +103,8 @@ class InvoiceExporter:
                 "Description": description,
                 "Quantity": total_quantity,
                 "Unit Price": avg_unit_price,
-                "Total": total_amount,
-                "Pages": index  
+                "Total": total_formatted,
+                "Pages": index  # Use the index as the page number
             }
             data.append(row)
 
@@ -113,7 +117,9 @@ class InvoiceExporter:
 
     def _export_to_csv_sync(self, df: pd.DataFrame) -> io.BytesIO:
         output = io.BytesIO()
-        df.to_csv(output, index=False)
+        # Use quoting=csv.QUOTE_ALL to ensure all fields are quoted and displayed properly
+        import csv
+        df.to_csv(output, index=False, quoting=csv.QUOTE_ALL)
         output.seek(0)
         return output
 
@@ -128,6 +134,26 @@ class InvoiceExporter:
             
             workbook = writer.book
             sheet = workbook['Invoices']
+            
+            # Define thick border style
+            thick_border = Border(
+                left=Side(style='thick'),
+                right=Side(style='thick'),
+                top=Side(style='thick'),
+                bottom=Side(style='thick')
+            )
+            
+            # Apply formatting to all cells
+            for row in sheet.iter_rows():
+                for cell in row:
+                    cell.border = thick_border
+                    cell.alignment = Alignment(wrap_text=True, vertical='center')
+                    
+            # Make headers bold
+            for cell in sheet[1]:
+                cell.font = Font(bold=True)
+            
+            # Auto-adjust column widths
             for column in sheet.columns:
                 max_length = 0
                 column_letter = column[0].column_letter
