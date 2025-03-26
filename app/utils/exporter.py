@@ -6,9 +6,10 @@ from app.models import Invoice
 from app.config import settings
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from openpyxl.styles import Border, Side, Alignment, Font
+from openpyxl.styles import Border, Side, Alignment, Font, PatternFill
 import csv
 from decimal import Decimal
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ class InvoiceExporter:
         self.columns = [
             "Filename", "Invoice Number", "Vendor Name", "Address", 
             "Invoice Date", "Grand Total", "Taxes", "Final Total", 
-            "Description", "Quantity", "Unit Price", "Total", "Pages"
+            "Description", "Pages"
         ]
         self.executor = ThreadPoolExecutor(max_workers=settings.MAX_WORKERS)
         self.default_currency = '$'  # Default currency symbol
@@ -61,8 +62,26 @@ class InvoiceExporter:
         else:
             return str_value
 
+    def _extract_numeric_value(self, formatted_value):
+        """Extract numeric value from formatted string with currency symbol"""
+        if formatted_value is None:
+            return 0
+        
+        if isinstance(formatted_value, (int, float, Decimal)):
+            return float(formatted_value)
+            
+        # Remove currency symbol and convert to float
+        numeric_str = re.sub(r'[^\d.]', '', str(formatted_value))
+        try:
+            return float(numeric_str) if numeric_str else 0
+        except ValueError:
+            return 0
+
     def _create_dataframe_sync(self, invoices: List[Invoice]) -> pd.DataFrame:
         data = []
+        grand_total_sum = 0
+        final_total_sum = 0
+        
         for index, invoice in enumerate(invoices, 1):
             # Combine address fields into a single address
             address_parts = [
@@ -74,47 +93,23 @@ class InvoiceExporter:
             ]
             address = ", ".join([part for part in address_parts if part])
             
-            # Calculate aggregated values for line items
-            total_quantity = 0
-            total_amount = 0
-            avg_unit_price = 0
-            
-            if invoice.items:
-                for item in invoice.items:
-                    if item.quantity is not None:
-                        total_quantity += item.quantity
-                    if item.total is not None:
-                        total_amount += item.total
-                
-                # Calculate average unit price if we have quantities
-                if total_quantity > 0:
-                    avg_unit_price = total_amount / total_quantity
-            
             # Use "Purchase X" as the description
             description = f"Purchase {index}"
             
             # Format monetary values with currency symbol
-            grand_total = invoice.grand_total
-            if grand_total is not None:
-                grand_total = f"{self.default_currency}{self._format_decimal(grand_total)}"
+            grand_total = None
+            if invoice.grand_total is not None:
+                grand_total_sum += float(invoice.grand_total)
+                grand_total = f"{self.default_currency}{self._format_decimal(invoice.grand_total)}"
                 
-            taxes = invoice.taxes
-            if taxes is not None:
-                taxes = f"{self.default_currency}{self._format_decimal(taxes)}"
+            taxes = None
+            if invoice.taxes is not None:
+                taxes = f"{self.default_currency}{self._format_decimal(invoice.taxes)}"
                 
-            final_total = invoice.final_total
-            if final_total is not None:
-                final_total = f"{self.default_currency}{self._format_decimal(final_total)}"
-                
-            # Format unit price with currency symbol
-            unit_price_formatted = None
-            if avg_unit_price != 0:
-                unit_price_formatted = f"{self.default_currency}{self._format_decimal(avg_unit_price)}"
-            
-            # Format total without currency symbol
-            total_formatted = None
-            if total_amount != 0:
-                total_formatted = self._format_decimal(total_amount)
+            final_total = None
+            if invoice.final_total is not None:
+                final_total_sum += float(invoice.final_total)
+                final_total = f"{self.default_currency}{self._format_decimal(invoice.final_total)}"
             
             row = {
                 "Filename": invoice.filename,
@@ -126,14 +121,22 @@ class InvoiceExporter:
                 "Taxes": taxes,
                 "Final Total": final_total,
                 "Description": description,
-                "Quantity": total_quantity,
-                "Unit Price": unit_price_formatted,
-                "Total": total_formatted,
-                "Pages": index  # Use the index as the page number
+                "Pages": index 
             }
             data.append(row)
 
+        # Create DataFrame
         df = pd.DataFrame(data, columns=self.columns)
+        
+        # Add Sum Total row
+        sum_row = {col: "" for col in self.columns}
+        sum_row["Vendor Name"] = "TOTAL"
+        sum_row["Grand Total"] = f"{self.default_currency}{self._format_decimal(grand_total_sum)}"
+        sum_row["Final Total"] = f"{self.default_currency}{self._format_decimal(final_total_sum)}"
+        
+        # Append sum row to DataFrame
+        df = pd.concat([df, pd.DataFrame([sum_row], columns=self.columns)], ignore_index=True)
+        
         return df
 
     async def _export_to_csv(self, df: pd.DataFrame) -> io.BytesIO:
@@ -168,10 +171,15 @@ class InvoiceExporter:
             )
             
             # Apply formatting to all cells
-            for row in sheet.iter_rows():
+            for row_idx, row in enumerate(sheet.iter_rows(), 1):
                 for cell in row:
                     cell.border = medium_border
                     cell.alignment = Alignment(wrap_text=True, vertical='center')
+                    
+                    # Highlight the sum row
+                    if row_idx == len(df) + 1:  # +1 for header row
+                        cell.font = Font(bold=True)
+                        cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
                     
             # Make headers bold
             for cell in sheet[1]:
