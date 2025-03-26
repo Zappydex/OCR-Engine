@@ -37,7 +37,7 @@ class InvoiceExporter:
 
     def _create_dataframe_sync(self, invoices: List[Invoice]) -> pd.DataFrame:
         data = []
-        for invoice in invoices:
+        for index, invoice in enumerate(invoices, 1):
             # Combine address fields into a single address
             address_parts = [
                 invoice.vendor.address.street,
@@ -53,13 +53,8 @@ class InvoiceExporter:
             total_amount = 0
             avg_unit_price = 0
             
-            # Concatenate descriptions with a separator
-            descriptions = []
-            
             if invoice.items:
                 for item in invoice.items:
-                    if item.description:
-                        descriptions.append(item.description)
                     if item.quantity is not None:
                         total_quantity += item.quantity
                     if item.total is not None:
@@ -69,8 +64,8 @@ class InvoiceExporter:
                 if total_quantity > 0:
                     avg_unit_price = total_amount / total_quantity
             
-            # Join all descriptions with a semicolon
-            combined_description = "; ".join(descriptions)
+            # Use "Purchase X" as the description
+            description = f"Purchase {index}"
             
             row = {
                 "Filename": invoice.filename,
@@ -81,7 +76,7 @@ class InvoiceExporter:
                 "Grand Total": invoice.grand_total,
                 "Taxes": invoice.taxes,
                 "Final Total": invoice.final_total,
-                "Description": combined_description,
+                "Description": description,
                 "Quantity": total_quantity,
                 "Unit Price": avg_unit_price,
                 "Total": total_amount,
